@@ -45,6 +45,11 @@ eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
+# qualitative generation samples, logged alongside the loss curve every eval_interval
+sample_num = 3
+sample_max_new_tokens = 100
+sample_temperature = 0.8
+sample_top_k = 200
 # wandb logging
 wandb_log = False # disabled by default
 wandb_project = 'owt'
@@ -158,6 +163,17 @@ if os.path.exists(meta_path):
         meta = pickle.load(f)
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
+
+# decoder for qualitative samples: gpt2 BPE for tiktoken-prepared datasets (no meta.pkl),
+# otherwise the dataset's own char-level mapping
+if meta_vocab_size is None:
+    import tiktoken
+    _sample_enc = tiktoken.get_encoding('gpt2')
+    decode_ids = _sample_enc.decode
+    sample_seed_token = _sample_enc.eot_token
+else:
+    decode_ids = lambda ids: ''.join(meta['itos'][i] for i in ids)
+    sample_seed_token = meta['stoi'].get('\n', 0)
 
 # model init
 if model_type == "gpt":
@@ -275,6 +291,19 @@ t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 running_mfu = -1.0
+
+@torch.no_grad()
+def generate_samples():
+    raw_model.eval()
+    idx = torch.full((sample_num, 1), sample_seed_token, dtype=torch.long, device=device)
+    with ctx:
+        out = raw_model.generate(idx, sample_max_new_tokens, temperature=sample_temperature, top_k=sample_top_k)
+    raw_model.train()
+    samples = [decode_ids(row[1:].tolist()) for row in out]
+    del idx, out
+    torch.cuda.empty_cache()
+    return samples
+
 while True:
 
     # determine and set the learning rate for this iteration
@@ -286,6 +315,9 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        samples = generate_samples()
+        for i, text in enumerate(samples):
+            print(f"step {iter_num} sample {i}: {text!r}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -293,6 +325,7 @@ while True:
                 "val/loss": losses['val'],
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
+                "samples": wandb.Table(columns=["sample"], data=[[s] for s in samples]),
             })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']

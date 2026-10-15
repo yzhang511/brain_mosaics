@@ -1,4 +1,9 @@
-"""Fixed-caption overfit experiment with reproducible image interventions."""
+"""Captioning trainer with reproducible image interventions.
+
+Supports a fixed-caption overfit mode and a per-epoch caption resampling mode
+for larger runs, where each training image's caption is redrawn uniformly
+from its human references at the start of every epoch.
+"""
 import argparse
 from dataclasses import asdict
 import json
@@ -10,7 +15,7 @@ from pathlib import Path
 import torch
 from torch.nn import functional as F
 
-from captioning.data import caption_batch, decode, encode, words
+from captioning.data import PAD_ID, EOS_ID, caption_batch, decode, encode, select_captions
 from captioning.model import CaptionConfig, Captioner
 from captioning.prepare import sha256
 from captioning.tracking import Tracker
@@ -28,7 +33,7 @@ def evaluate(model, features, inputs, targets, batch_size):
     for start in range(0, len(features), batch_size):
         logits, _ = model(features[start:start + batch_size], inputs[start:start + batch_size])
         labels = targets[start:start + batch_size]
-        valid = labels != 0
+        valid = labels != PAD_ID
         total_loss += F.cross_entropy(logits[valid], labels[valid], reduction='sum').item()
         count += valid.sum().item()
         correct += ((logits.argmax(-1) == labels) & valid).sum().item()
@@ -36,18 +41,18 @@ def evaluate(model, features, inputs, targets, batch_size):
 
 
 @torch.no_grad()
-def generations(model, features, records, vocabulary, batch_size):
+def generations(model, features, records, batch_size):
     result = []
     for start in range(0, len(features), batch_size):
         generated = model.generate(features[start:start + batch_size]).tolist()
         for record, tokens in zip(records[start:start + batch_size], generated):
-            expected = encode(record['caption'], vocabulary)[1:]
+            expected = encode(record['caption'])[1:]
             predicted = tokens[1:]
-            if 2 in predicted:
-                predicted = predicted[:predicted.index(2) + 1]
+            if EOS_ID in predicted:
+                predicted = predicted[:predicted.index(EOS_ID) + 1]
             result.append(dict(image_id=record['image_id'], reference=record['caption'],
-                generated=decode(tokens, vocabulary), generated_ids=predicted,
-                exact_token_match=predicted == expected, emitted_eos=2 in predicted))
+                generated=decode(tokens), generated_ids=predicted,
+                exact_token_match=predicted == expected, emitted_eos=EOS_ID in predicted))
     return result
 
 
@@ -62,6 +67,10 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=0.001)
     parser.add_argument('--target-nll', type=float, default=0.03)
     parser.add_argument('--seed', type=int, default=20261014)
+    parser.add_argument('--caption-resampling', choices=['fixed', 'per-epoch'], default='fixed',
+                        help='fixed: always train on each image\'s lowest-ID caption. '
+                             'per-epoch: redraw a caption per training image, uniformly from its '
+                             'references, at the start of every epoch (an epoch is ceil(train_size/batch_size) steps).')
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
     parser.add_argument('--resume', type=Path)
     parser.add_argument('--wandb-mode', choices=['online', 'offline', 'disabled'], default='disabled')
@@ -83,15 +92,23 @@ def main():
     cache = torch.load(args.features, map_location='cpu', weights_only=True)
     if cache['manifest_sha256'] != sha256(args.manifest):
         raise ValueError('Feature cache does not match manifest')
-    vocabulary = manifest['vocabulary']
     batches = {}
     for split in ('train', 'val'):
         records = manifest[split]
         if cache[f'{split}_ids'] != [record['image_id'] for record in records]:
             raise ValueError('Feature and caption image ordering differs')
-        inputs, targets = caption_batch(records, vocabulary)
+        inputs, targets = caption_batch(records)
         batches[split] = (cache[split].to(device), inputs.to(device), targets.to(device))
-    config = CaptionConfig(vocab_size=len(vocabulary))
+    train_records = manifest['train']
+    epoch_steps = -(-len(train_records) // args.batch_size)  # ceil division
+
+    def resample_train_batch(epoch_index):
+        rng = random.Random(f'{args.seed}:caption-resample:{epoch_index}')
+        captions = select_captions(train_records, rng)
+        inputs, targets = caption_batch(train_records, captions=captions)
+        return inputs.to(device), targets.to(device)
+
+    config = CaptionConfig()
     model = Captioner(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
     history, timings, start_step = [], [], 0
@@ -113,7 +130,9 @@ def main():
         arguments={key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
         manifest_sha256=cache['manifest_sha256'], feature_cache_sha256=sha256(args.features),
         source_sha256=source_hashes, torch_version=torch.__version__, device=str(device),
-        sampling='uniform random images with replacement, fixed lowest-ID caption',
+        sampling=('uniform random images with replacement, fixed lowest-ID caption' if args.caption_resampling == 'fixed'
+                  else f'uniform random images with replacement; caption per training image resampled '
+                       f'uniformly from its references every epoch ({epoch_steps} steps/epoch)'),
         decoding='greedy; suppress PAD/BOS; stop at EOS or 64 generated tokens',
         intervention='roll features by one across the entire split; zero raw cached features before adapter')
     (args.output_dir / 'config.json').write_text(json.dumps(experiment, indent=2) + '\n')
@@ -122,7 +141,13 @@ def main():
     if tracker.run is not None:
         (args.output_dir / 'wandb_run.json').write_text(json.dumps(dict(
             id=tracker.run.id, url=tracker.run.url, mode=args.wandb_mode), indent=2) + '\n')
-    features, inputs, targets = batches['train']
+    features = batches['train'][0]
+    if args.caption_resampling == 'per-epoch':
+        current_epoch = start_step // epoch_steps
+        inputs, targets = resample_train_batch(current_epoch)
+    else:
+        current_epoch = None
+        inputs, targets = batches['train'][1], batches['train'][2]
     start_time = time.perf_counter()
 
     def checkpoint(step):
@@ -130,7 +155,7 @@ def main():
         temporary = path.with_suffix('.partial')
         torch.save(dict(model=model.state_dict(), optimizer=optimizer.state_dict(),
             model_config=asdict(config), manifest_sha256=cache['manifest_sha256'],
-            vocabulary=vocabulary, step=step, history=history, step_seconds=timings,
+            step=step, history=history, step_seconds=timings,
             rng_state=torch.get_rng_state(),
             cuda_rng_state=torch.cuda.get_rng_state_all() if device.type == 'cuda' else None), temporary)
         temporary.replace(path)
@@ -143,6 +168,11 @@ def main():
         tracker.log(0, {f'train/{key}': value for key, value in initial.items()})
     step = start_step
     for step in range(start_step + 1, args.steps + 1):
+        if args.caption_resampling == 'per-epoch':
+            epoch_index = (step - 1) // epoch_steps
+            if epoch_index != current_epoch:
+                current_epoch = epoch_index
+                inputs, targets = resample_train_batch(epoch_index)
         model.train()
         indices = torch.randint(len(features), (args.batch_size,), device=device)
         synchronize(device)
@@ -160,7 +190,7 @@ def main():
             tracker.log(step, {'train/batch_nll': loss.item(), 'runtime/step_seconds': timings[-1]})
         if step % args.eval_every == 0 or step == args.steps:
             measured = evaluate(model, features, inputs, targets, args.batch_size)
-            history.append(dict(step=step, train=measured,
+            history.append(dict(step=step, train=measured, epoch=current_epoch,
                                 elapsed_seconds=time.perf_counter() - start_time))
             print(json.dumps(history[-1]), flush=True)
             validation = evaluate(model, *batches['val'], args.batch_size)
@@ -183,7 +213,7 @@ def main():
         for condition, modified in [('correct', features), ('shuffled', features.roll(1, 0)),
                                     ('zero_content', torch.zeros_like(features))]:
             metrics = evaluate(model, modified, inputs, targets, args.batch_size)
-            samples = generations(model, modified, manifest[split], vocabulary, args.batch_size)
+            samples = generations(model, modified, manifest[split], args.batch_size)
             metrics.update(generations=samples, exact_match_rate=sum(s['exact_token_match'] for s in samples) / len(samples))
             if condition == 'shuffled':
                 donor_ids = [r['image_id'] for r in manifest[split]]
@@ -195,9 +225,6 @@ def main():
                                if key != 'generations'})
             tracker.samples(step, split, condition, samples)
             print(f'{split}/{condition}: nll={metrics["nll"]:.4f}, exact={metrics["exact_match_rate"]:.3f}', flush=True)
-    for split in ('train', 'val'):
-        ids = [encode(r['caption'], vocabulary)[1:-1] for r in manifest[split]]
-        report['results'][split]['unknown_token_rate'] = sum(row.count(3) for row in ids) / sum(map(len, ids))
     (args.output_dir / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     tracker.finish({key: value for key, value in report.items() if key != 'results'}, args.output_dir)
 

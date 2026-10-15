@@ -11,7 +11,8 @@ class CaptionTests(unittest.TestCase):
         torch.manual_seed(7)
         torch.set_num_threads(1)
         self.model = Captioner(CaptionConfig(vocab_size=12, n_layer=2, n_embd=16,
-            n_head=2, pmem_size=8, grid_size=2, feature_dim=3, max_caption_tokens=8)).eval()
+            n_head=2, pmem_size=8, grid_size=2, feature_dim=3, max_caption_tokens=8,
+            pad_id=0, bos_id=1, eos_id=2)).eval()
         self.features = torch.randn(2, 3, 2, 2)
         self.tokens = torch.tensor([[1, 4, 5, 6], [1, 7, 8, 9]])
 
@@ -69,7 +70,7 @@ class CaptionTests(unittest.TestCase):
         torch.testing.assert_close(before, encoder.layers[1].running_mean)
 
     def test_default_configuration_backward(self):
-        model = Captioner(CaptionConfig(vocab_size=12))
+        model = Captioner(CaptionConfig(vocab_size=12, pad_id=0, bos_id=1, eos_id=2))
         _, loss = model(torch.randn(1, 128, 14, 14), self.tokens[:1],
                         torch.tensor([[4, 5, 6, 2]]))
         loss.backward()

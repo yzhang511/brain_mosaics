@@ -10,7 +10,7 @@ from nanoMosaics.mosaic_model import MemoryMosaic, MemoryMosaicConfig
 
 @dataclass
 class CaptionConfig:
-    vocab_size: int
+    vocab_size: int = 50304  # tiktoken gpt2 BPE (50257), padded to a multiple of 64
     n_layer: int = 4
     n_embd: int = 256
     n_head: int = 4
@@ -19,9 +19,10 @@ class CaptionConfig:
     feature_dim: int = 128
     max_caption_tokens: int = 64  # Includes BOS; targets include EOS.
     dropout: float = 0.0
-    pad_id: int = 0
-    bos_id: int = 1
-    eos_id: int = 2
+    bias: bool = False  # matches nanoMosaics pretraining default, so checkpoints load cleanly
+    pad_id: int = 50258
+    bos_id: int = 50257
+    eos_id: int = 50256
 
 
 def spatial_positions(grid_size, dim):
@@ -49,7 +50,7 @@ class Captioner(nn.Module):
             vocab_size=config.vocab_size,
             block_size=config.grid_size ** 2 + config.max_caption_tokens,
             n_layer=config.n_layer, n_embd=config.n_embd, n_head=config.n_head,
-            pmem_size=config.pmem_size, pmem_count=1, dropout=config.dropout,
+            pmem_size=config.pmem_size, pmem_count=1, dropout=config.dropout, bias=config.bias,
         ))
         self.adapter = nn.Linear(config.feature_dim, config.n_embd)
         self.image_type = nn.Parameter(torch.zeros(config.n_embd))
