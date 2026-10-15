@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ResNet-18 feature inspection</title>
+<style>body{font:17px system-ui;max-width:1400px;margin:30px auto;padding:0 20px;line-height:1.5}img{width:100%;height:auto}details{margin:20px 0}summary{cursor:pointer;font-weight:bold}a{color:#1558a6}</style></head><body>
+<h1>Inspect the visual input before choosing it</h1>
+<p>Frozen ImageNet ResNet-18; four fixed COCO development examples. No captioner has been trained. Compare preprocessing, layers, and pooling. The eventual prefix length is 196 tokens; the layer remains undecided.</p>
+<p><b>Read the figures:</b> RMS shows activation magnitude, not semantic importance. PCA colors show three directions of variation, not object categories; colors are comparable within a layer only. Cosine similarity compares every pooled feature vector to the marked token; it is not attention or segmentation. Maps show spatial indices with overlapping receptive fields, not isolated image patches.</p>
+<h2>What does the network actually see?</h2><img src="preprocessing.png" alt="Original, cropped and full-frame inputs">
+<h2>COCO 139</h2>
+<img src="000000000139_full_frame.png" alt="Layer comparison for full-frame input">
+<details><summary>Compare official center-crop preprocessing</summary><img src="000000000139_center_crop.png" alt="Center-crop layer comparison"></details>
+<h2>COCO 39769</h2>
+<img src="000000039769_full_frame.png" alt="Layer comparison for full-frame input">
+<details><summary>Compare official center-crop preprocessing</summary><img src="000000039769_center_crop.png" alt="Center-crop layer comparison"></details>
+<h2>COCO 252219</h2>
+<img src="000000252219_full_frame.png" alt="Layer comparison for full-frame input">
+<details><summary>Compare official center-crop preprocessing</summary><img src="000000252219_center_crop.png" alt="Center-crop layer comparison"></details>
+<h2>COCO 397133</h2>
+<img src="000000397133_full_frame.png" alt="Layer comparison for full-frame input">
+<details><summary>Compare official center-crop preprocessing</summary><img src="000000397133_center_crop.png" alt="Center-crop layer comparison"></details>
+<details><summary>layer1: inspect individual channels</summary><img src="channels_layer1.png" alt="Selected channel activations"></details>
+<details><summary>layer2: inspect individual channels</summary><img src="channels_layer2.png" alt="Selected channel activations"></details>
+<details><summary>layer3: inspect individual channels</summary><img src="channels_layer3.png" alt="Selected channel activations"></details>
+<h2>Decision to discuss</h2><p>Which preprocessing preserves the objects and relationships of interest? Does pooling remove small spatial details? What remains distinguishable at each layer? These plots guide hypotheses; held-out semantic probes and controlled caption experiments must test them.</p>
+<p>Full-frame resizing distorts geometry; center cropping removes content. Neither has been selected for training. Aspect-preserving padding is another possible follow-up, with its own boundary effects.</p>
+<p><a href="metadata.json">IDs, sources, checksums, versions, PCA basis, selection rules and timing</a>. These inspection images must be excluded from the eventual held-out test set.</p></body></html>

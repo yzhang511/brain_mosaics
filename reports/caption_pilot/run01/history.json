@@ -1,0 +1,80 @@
+[
+  {
+    "step": 0,
+    "train": {
+      "nll": 6.278271892283223,
+      "token_accuracy": 0.0024752475247524753,
+      "tokens": 404
+    }
+  },
+  {
+    "step": 100,
+    "train": {
+      "nll": 0.9372044223369939,
+      "token_accuracy": 0.8267326732673267,
+      "tokens": 404
+    },
+    "elapsed_seconds": 31.970387561013922,
+    "val": {
+      "nll": 5.1543270874023435,
+      "token_accuracy": 0.18,
+      "tokens": 100
+    }
+  },
+  {
+    "step": 200,
+    "train": {
+      "nll": 0.3574519181015468,
+      "token_accuracy": 0.9158415841584159,
+      "tokens": 404
+    },
+    "elapsed_seconds": 62.50205395196099,
+    "val": {
+      "nll": 6.390317687988281,
+      "token_accuracy": 0.12,
+      "tokens": 100
+    }
+  },
+  {
+    "step": 300,
+    "train": {
+      "nll": 0.10820094370605922,
+      "token_accuracy": 0.9752475247524752,
+      "tokens": 404
+    },
+    "elapsed_seconds": 93.80811654403806,
+    "val": {
+      "nll": 6.763440246582031,
+      "token_accuracy": 0.14,
+      "tokens": 100
+    }
+  },
+  {
+    "step": 400,
+    "train": {
+      "nll": 0.10313602942641419,
+      "token_accuracy": 0.9727722772277227,
+      "tokens": 404
+    },
+    "elapsed_seconds": 125.21725483098999,
+    "val": {
+      "nll": 7.268647766113281,
+      "token_accuracy": 0.15,
+      "tokens": 100
+    }
+  },
+  {
+    "step": 500,
+    "train": {
+      "nll": 0.019555390028670284,
+      "token_accuracy": 0.995049504950495,
+      "tokens": 404
+    },
+    "elapsed_seconds": 156.13906051893719,
+    "val": {
+      "nll": 7.1247384643554685,
+      "token_accuracy": 0.17,
+      "tokens": 100
+    }
+  }
+]

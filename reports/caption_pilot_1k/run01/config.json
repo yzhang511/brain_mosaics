@@ -1,0 +1,58 @@
+{
+  "model": {
+    "vocab_size": 3403,
+    "n_layer": 4,
+    "n_embd": 256,
+    "n_head": 4,
+    "pmem_size": 256,
+    "grid_size": 14,
+    "feature_dim": 128,
+    "max_caption_tokens": 64,
+    "dropout": 0.0,
+    "pad_id": 0,
+    "bos_id": 1,
+    "eos_id": 2
+  },
+  "optimizer": {
+    "name": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "clip_grad_norm": 1.0
+  },
+  "arguments": {
+    "manifest": "reports/caption_pilot_1k/manifest.json",
+    "features": "/scratch/users/yizzhang/memory_mosaics/caption_pilot_1k/features.pt",
+    "output_dir": "/scratch/users/yizzhang/memory_mosaics/caption_pilot_1k/run01",
+    "steps": 300,
+    "batch_size": 16,
+    "eval_every": 100,
+    "learning_rate": 0.001,
+    "target_nll": 0.03,
+    "seed": 20261014,
+    "device": "cpu",
+    "resume": null,
+    "wandb_mode": "online",
+    "wandb_project": "memory-mosaics",
+    "wandb_entity": null,
+    "wandb_name": "coco1k-sanity"
+  },
+  "manifest_sha256": "abb0d06601b1540877e22a8d4419bb3f3cdd111cdff05ff1138ce36c0e606bdf",
+  "feature_cache_sha256": "d238f787ccad757d5d5e5a2c1ea81a5fdd33dd5df58c24a8a1d5d04641645c1e",
+  "source_sha256": {
+    "model.py": "59802ad0434df8e79cb860ccabbffd55d8fdc66c232c26901ade1cdbe61ae61f",
+    "vision.py": "00bc2085a7dfa5d6288b5f5ef2009419c376f6c679e86a6e09a4204535d23740",
+    "data.py": "eef1002105a54120e10f26bf15e3be532b9287915bde6d2f9576662d7c6fd1ab",
+    "prepare.py": "1e196a4202f61aa2b20ebbca80bdde91e699f74548ea352c14f1e0488aa492aa",
+    "train.py": "0f99bb503cd56be01f84646cbc0c5e801bf1924645df5a780f740ab5120dffce",
+    "tracking.py": "e0d2e99207acbbf0487b7417e8704f780c4cc7d75c82394db34a578eb75789df"
+  },
+  "torch_version": "2.4.0a0",
+  "device": "cpu",
+  "sampling": "uniform random images with replacement, fixed lowest-ID caption",
+  "decoding": "greedy; suppress PAD/BOS; stop at EOS or 64 generated tokens",
+  "intervention": "roll features by one across the entire split; zero raw cached features before adapter"
+}

@@ -1,0 +1,29 @@
+{
+  "scope": "Qualitative review of free generations against fixed human captions; not a systematic semantic benchmark.",
+  "training_errors": [
+    {
+      "image_id": 311192,
+      "categories": [
+        "missing verb",
+        "ungrammatical continuation"
+      ],
+      "observation": "Omits hit from prepares to hit a baseball."
+    },
+    {
+      "image_id": 89181,
+      "categories": [
+        "wrong object",
+        "ungrammatical continuation"
+      ],
+      "observation": "Replaces catch the frisbee with a baseball."
+    }
+  ],
+  "validation": {
+    "reviewed_images": 8,
+    "observation": "All eight generations describe an unrelated scene relative to the reference, with wrong objects or unsupported details. Outputs largely reproduce training-caption phrases.",
+    "reversed_roles": "Not separately established by this review.",
+    "unknown_token_rate": 0.2717391304347826
+  },
+  "interpretation": "Successful tiny-set memorization and image dependence on training examples. Held-out captioning is poor; do not infer semantic generalization. The training-only pilot vocabulary maps 27.2% of validation word/punctuation tokens to UNK.",
+  "next_step": "Declare a larger training-only tokenizer pool, freeze a vocabulary across nested subsets, and train a 1k-image pilot with a larger fixed image-disjoint validation set. Preserve reserved test IDs."
+}

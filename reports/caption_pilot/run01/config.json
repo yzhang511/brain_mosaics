@@ -1,0 +1,58 @@
+{
+  "model": {
+    "vocab_size": 430,
+    "n_layer": 4,
+    "n_embd": 256,
+    "n_head": 4,
+    "pmem_size": 256,
+    "grid_size": 14,
+    "feature_dim": 128,
+    "max_caption_tokens": 64,
+    "dropout": 0.0,
+    "pad_id": 0,
+    "bos_id": 1,
+    "eos_id": 2
+  },
+  "optimizer": {
+    "name": "AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "clip_grad_norm": 1.0
+  },
+  "arguments": {
+    "manifest": "reports/caption_pilot/manifest.json",
+    "features": "/scratch/users/yizzhang/memory_mosaics/caption_pilot/features.pt",
+    "output_dir": "/scratch/users/yizzhang/memory_mosaics/caption_pilot/run01",
+    "steps": 1600,
+    "batch_size": 4,
+    "eval_every": 100,
+    "learning_rate": 0.001,
+    "target_nll": 0.03,
+    "seed": 20261014,
+    "device": "cpu",
+    "resume": null,
+    "wandb_mode": "online",
+    "wandb_project": "memory-mosaics-captioning",
+    "wandb_entity": null,
+    "wandb_name": "coco32-fixed-caption-overfit"
+  },
+  "manifest_sha256": "9a4d330c703d4315d132d277a028acf8e3b85fd26444d78d9b06056e0c5787d0",
+  "feature_cache_sha256": "52858cff89928214fb7739f8ebc0eca0b736bf3fc165fb9c1443c8f966b472d1",
+  "source_sha256": {
+    "model.py": "59802ad0434df8e79cb860ccabbffd55d8fdc66c232c26901ade1cdbe61ae61f",
+    "vision.py": "00bc2085a7dfa5d6288b5f5ef2009419c376f6c679e86a6e09a4204535d23740",
+    "data.py": "eef1002105a54120e10f26bf15e3be532b9287915bde6d2f9576662d7c6fd1ab",
+    "prepare.py": "1e196a4202f61aa2b20ebbca80bdde91e699f74548ea352c14f1e0488aa492aa",
+    "train.py": "65f06dc7a36334633cffa5adc7ee842bd47139b5986dc6e6273ee04ace0a93c2",
+    "tracking.py": "e0d2e99207acbbf0487b7417e8704f780c4cc7d75c82394db34a578eb75789df"
+  },
+  "torch_version": "2.4.0a0",
+  "device": "cpu",
+  "sampling": "uniform random images with replacement, fixed lowest-ID caption",
+  "decoding": "greedy; suppress PAD/BOS; stop at EOS or 64 generated tokens",
+  "intervention": "roll features by one across the entire split; zero raw cached features before adapter"
+}
