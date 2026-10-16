@@ -1,0 +1,251 @@
+{
+  "selected_nouns": [
+    "rabbit",
+    "squirrel",
+    "cow",
+    "penguin",
+    "bear",
+    "mouse",
+    "butterfly"
+  ],
+  "selected_count": 7,
+  "total_nouns": 20,
+  "selected_confirmed_count": 6,
+  "confirmation_rule": "Held-out neutral mean > 0 and at least 3/4 positive template means; not used to reselect.",
+  "conditions": [
+    "neutral",
+    "consistent",
+    "conflicting",
+    "other"
+  ],
+  "bootstrap": "5000 resamples of noun pairs; fixed templates; seed 1729",
+  "all_nouns": {
+    "condition_scores": {
+      "mean": [
+        0.7398445472121239,
+        0.6847467978484929,
+        -1.514374459651299,
+        -0.5634766039904207
+      ],
+      "low": [
+        0.5309058570675552,
+        0.3840732732415199,
+        -1.8984818132646615,
+        -0.8420240876218305
+      ],
+      "high": [
+        1.0480340356752276,
+        1.0223671363713216,
+        -1.0654959205212071,
+        -0.33024915271671496
+      ],
+      "clusters": 10
+    },
+    "contrasts": {
+      "mean": [
+        -2.2542190068634227,
+        -1.3033211512025447,
+        -0.9508978556608781
+      ],
+      "low": [
+        -2.8872165668342498,
+        -1.6726950231892987,
+        -1.3790692771755857
+      ],
+      "high": [
+        -1.6747326045576483,
+        -0.9713960920285903,
+        -0.5226553958142176
+      ],
+      "clusters": 10
+    },
+    "contrast_names": [
+      "target_override",
+      "other_shift",
+      "entity_specificity"
+    ],
+    "fraction_default_preferred": {
+      "neutral": 0.59375,
+      "consistent": 0.59375,
+      "conflicting": 0.30625,
+      "other": 0.41875
+    }
+  },
+  "selected_nouns_results": {
+    "condition_scores": {
+      "mean": [
+        2.9417786725929806,
+        0.27969368680247236,
+        -1.705002616226141,
+        -0.5561715698401842
+      ],
+      "low": [
+        1.5275884331070952,
+        -1.155209465218442,
+        -3.0952807626154804,
+        -1.7419324819264668
+      ],
+      "high": [
+        4.216044879731321,
+        1.9799089910728591,
+        0.29252738831564784,
+        1.0178837882620948
+      ],
+      "clusters": 7
+    },
+    "contrasts": {
+      "mean": [
+        -4.646781288819121,
+        -3.497950242433165,
+        -1.1488310463859566
+      ],
+      "low": [
+        -6.739464749266128,
+        -5.110555825568736,
+        -1.716257592729692
+      ],
+      "high": [
+        -2.6201338711460784,
+        -1.9017908142081328,
+        -0.6219805540949376
+      ],
+      "clusters": 7
+    },
+    "contrast_names": [
+      "target_override",
+      "other_shift",
+      "entity_specificity"
+    ],
+    "fraction_default_preferred": {
+      "neutral": 0.875,
+      "consistent": 0.5535714285714286,
+      "conflicting": 0.26785714285714285,
+      "other": 0.4107142857142857
+    }
+  },
+  "pair_controls": [
+    {
+      "pair_id": 0,
+      "nouns": [
+        "rabbit",
+        "cat"
+      ],
+      "neutral_evaluation_mean": 0.8682931251823902
+    },
+    {
+      "pair_id": 1,
+      "nouns": [
+        "monkey",
+        "squirrel"
+      ],
+      "neutral_evaluation_mean": 0.6254653297364712
+    },
+    {
+      "pair_id": 2,
+      "nouns": [
+        "cow",
+        "lion"
+      ],
+      "neutral_evaluation_mean": 0.45933203399181366
+    },
+    {
+      "pair_id": 3,
+      "nouns": [
+        "panda",
+        "penguin"
+      ],
+      "neutral_evaluation_mean": 0.4641813561320305
+    },
+    {
+      "pair_id": 4,
+      "nouns": [
+        "bee",
+        "frog"
+      ],
+      "neutral_evaluation_mean": 0.8276375830173492
+    },
+    {
+      "pair_id": 5,
+      "nouns": [
+        "horse",
+        "bear"
+      ],
+      "neutral_evaluation_mean": 0.645275205373764
+    },
+    {
+      "pair_id": 6,
+      "nouns": [
+        "mouse",
+        "owl"
+      ],
+      "neutral_evaluation_mean": 0.5431337133049965
+    },
+    {
+      "pair_id": 7,
+      "nouns": [
+        "butterfly",
+        "dog"
+      ],
+      "neutral_evaluation_mean": 1.975501462817192
+    },
+    {
+      "pair_id": 8,
+      "nouns": [
+        "chicken",
+        "goat"
+      ],
+      "neutral_evaluation_mean": 0.4183301031589508
+    },
+    {
+      "pair_id": 9,
+      "nouns": [
+        "elephant",
+        "sheep"
+      ],
+      "neutral_evaluation_mean": 0.5712955594062805
+    }
+  ],
+  "pair_controls_positive": 10,
+  "presentation_order_diagnostic": {
+    "all_nouns": {
+      "0": {
+        "condition_means": {
+          "neutral": 1.243257101625204,
+          "consistent": -0.7357084773480892,
+          "conflicting": -1.0622640982270242,
+          "other": 0.2300288944505155
+        },
+        "entity_specificity": -1.2922929926775397
+      },
+      "1": {
+        "condition_means": {
+          "neutral": 0.23643199279904364,
+          "consistent": 2.105202073045075,
+          "conflicting": -1.9664848210755737,
+          "other": -1.3569821024313569
+        },
+        "entity_specificity": -0.6095027186442168
+      }
+    },
+    "selected_nouns": {
+      "0": {
+        "condition_means": {
+          "neutral": 3.4533992473568236,
+          "consistent": -1.732008050595011,
+          "conflicting": -1.106684681560312,
+          "other": 0.3870181651519878
+        },
+        "entity_specificity": -1.4937028467122997
+      },
+      "1": {
+        "condition_means": {
+          "neutral": 2.4301580978291377,
+          "consistent": 2.2913954241999557,
+          "conflicting": -2.30332055089197,
+          "other": -1.4993613048323564
+        },
+        "entity_specificity": -0.8039592460596137
+      }
+    }
+  }
+}

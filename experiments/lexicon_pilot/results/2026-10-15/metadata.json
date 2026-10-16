@@ -1,0 +1,32 @@
+{
+  "checkpoint": "/scratch/users/yizzhang/memory_mosaics/babistories/out/ckpt.pt",
+  "checkpoint_size": 1511590981,
+  "checkpoint_mtime_ns": 1792093024000000000,
+  "iteration": 23000,
+  "model_args": {
+    "n_layer": 12,
+    "n_head": 12,
+    "n_embd": 768,
+    "block_size": 512,
+    "bias": false,
+    "vocab_size": 50304,
+    "dropout": 0.05,
+    "pmem_count": 1,
+    "pmem_size": 2688
+  },
+  "training_run": "babistories-12L768d",
+  "torch_version": "2.4.0a0",
+  "device": "cpu",
+  "dtype": "float32",
+  "seed": 1729,
+  "batch_size": 8,
+  "threads": 1,
+  "script_sha256": "2d2f3e9a5b7dd66317e3f33d562194ab9e286e5a8046854cc422acf655b38403",
+  "reference_max_error": 1.0013580322265625e-05,
+  "batch_max_error": 1.0013580322265625e-05,
+  "prompts": 1280,
+  "unique_candidates": 2560,
+  "benchmark_seconds": 8.038727730046958,
+  "estimated_scoring_seconds": 643.0982184037566,
+  "total_seconds": 714.1083331740228
+}

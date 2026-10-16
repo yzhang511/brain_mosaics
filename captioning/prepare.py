@@ -15,7 +15,7 @@ from PIL import Image
 from torchvision.models import resnet18, ResNet18_Weights
 
 from captioning.data import VOCAB_SIZE, encoded_length
-from captioning.vision import FrozenEncoder, preprocess_image
+from captioning.vision import FrozenEncoder, Dinov2Encoder, TAPS, DINO_MODELS, FEATURE_DIMS, preprocess_image
 
 INSPECTION_IDS = {139, 39769, 252219, 397133}
 ANNOTATIONS_URL = 'https://s3.amazonaws.com/images.cocodataset.org/annotations/annotations_trainval2017.zip'
@@ -73,7 +73,8 @@ def choose_records(archive, split, count, seed, excluded=(), max_caption_tokens=
                             all_captions=[item['caption'] for item in candidates],
                             url=f'https://s3.amazonaws.com/images.cocodataset.org/{split}/{images[image_id]["file_name"]}'))
     if len(records) != count:
-        raise ValueError('Requested more images than available after excluding over-length captions')
+        raise ValueError('Requested more images than available after id-based exclusions '
+                         'and skipping over-length captions')
     return records, excluded_long_caption_ids
 
 
@@ -97,14 +98,17 @@ def load_tensor(path):
 
 
 def encode_records(records, downloads, encoder, device, batch_size):
-    encoded = []
+    # Preallocated and filled in place, rather than appending to a list and torch.cat-ing at the
+    # end, so peak memory is one copy of the full feature tensor, not two (at DINOv2's 16x16x384
+    # resolution, a 100k-image split is ~37GB; a transient second copy would risk OOM).
+    output = torch.empty(len(records), encoder.feature_dim, encoder.pool_size, encoder.pool_size)
     for start in range(0, len(records), batch_size):
         chunk = records[start:start + batch_size]
         paths = [downloads / f'{record["image_id"]:012d}.jpg' for record in chunk]
         inputs = torch.stack([load_tensor(path) for path in paths]).to(device)
-        encoded.append(encoder(inputs).cpu())
+        output[start:start + len(chunk)] = encoder(inputs).cpu()
         print(f'encoded {min(start + batch_size, len(records))}/{len(records)}', flush=True)
-    return torch.cat(encoded, dim=0)
+    return output
 
 
 def main():
@@ -125,6 +129,12 @@ def main():
                         help='Manifest from captioning/alessandro_audit.py; its coco_free_recall '
                              'image ids are excluded from sampling so they stay unseen for the '
                              'later t20 specialization stage. Pass a nonexistent path to disable.')
+    parser.add_argument('--feature-layer', choices=list(TAPS) + list(DINO_MODELS), default='layer2')
+    parser.add_argument('--feature-pool-size', type=int, default=None,
+                        help='Spatial grid size features are adaptive-average-pooled to. '
+                             'Defaults to 14 for layer2 (its native resolution is 28x28 for a '
+                             '224x224 input), 7 for layer4 (its native resolution), or 16 for '
+                             'dinov2_vits14 (its native resolution for a 224x224 input).')
     args = parser.parse_args()
     if min(args.download_workers, args.encode_batch_size) < 1:
         raise ValueError('Download workers and encode batch size must be positive')
@@ -143,17 +153,32 @@ def main():
                                   args.seed + 1, excluded)
     val, test = held_out[:args.val_size], held_out[args.val_size:]
     lengths = [encoded_length(record['caption']) for record in train + val]
-    weights = ResNet18_Weights.IMAGENET1K_V1
-    checkpoint = downloads / Path(weights.url).name
-    download(weights.url, checkpoint)
-    weight_hash = sha256(checkpoint)
-    if not weight_hash.startswith('f37072fd'):
-        raise ValueError('Unexpected official ResNet-18 weights')
-    backbone = resnet18(weights=None)
-    backbone.load_state_dict(torch.load(checkpoint, map_location='cpu', weights_only=True))
-    encoder = FrozenEncoder(weights=None).to(args.device)
-    encoder.layers.load_state_dict(torch.nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu,
-        backbone.maxpool, backbone.layer1, backbone.layer2).state_dict())
+    feature_dim = FEATURE_DIMS[args.feature_layer]
+    default_pool_size = dict(layer2=14, layer4=7, dinov2_vits14=16)[args.feature_layer]
+    pool_size = args.feature_pool_size if args.feature_pool_size is not None else default_pool_size
+    if args.feature_layer in TAPS:
+        weights = ResNet18_Weights.IMAGENET1K_V1
+        checkpoint = downloads / Path(weights.url).name
+        download(weights.url, checkpoint)
+        weight_hash = sha256(checkpoint)
+        if not weight_hash.startswith('f37072fd'):
+            raise ValueError('Unexpected official ResNet-18 weights')
+        backbone = resnet18(weights=None)
+        backbone.load_state_dict(torch.load(checkpoint, map_location='cpu', weights_only=True))
+        tap_names, _ = TAPS[args.feature_layer]
+        encoder = FrozenEncoder(weights=None, layer=args.feature_layer, pool_size=pool_size).to(args.device)
+        encoder.layers.load_state_dict(torch.nn.Sequential(
+            *(getattr(backbone, name) for name in tap_names)).state_dict())
+        encoder_metadata = dict(weights='ResNet18_Weights.IMAGENET1K_V1', url=weights.url, sha256=weight_hash,
+                                layer=args.feature_layer, feature_dim=feature_dim,
+                                pooling=f'adaptive_avg_pool2d({pool_size},{pool_size})', frozen=True)
+    else:
+        import transformers
+        encoder = Dinov2Encoder(name=args.feature_layer, pool_size=pool_size).to(args.device)
+        encoder_metadata = dict(weights=DINO_MODELS[args.feature_layer]['repo'], library='transformers',
+                                transformers_version=transformers.__version__,
+                                layer=args.feature_layer, feature_dim=feature_dim,
+                                pooling=f'adaptive_avg_pool2d({pool_size},{pool_size})', frozen=True)
     features = {}
     for name, records in [('train', train), ('val', val)]:
         download_records(records, downloads, args.download_workers)
@@ -174,8 +199,7 @@ def main():
         max_caption_tokens=64, max_observed_caption_tokens=max(lengths), truncated_captions=0,
         preprocessing=dict(resize=[224, 224], interpolation='bilinear', antialias=True,
                            color='RGB', exif_transpose=False, mean=[.485,.456,.406], std=[.229,.224,.225]),
-        encoder=dict(weights='ResNet18_Weights.IMAGENET1K_V1', url=weights.url, sha256=weight_hash,
-                     layer='layer2', pooling='adaptive_avg_pool2d(14,14)', frozen=True),
+        encoder=encoder_metadata,
         annotations=dict(url=ANNOTATIONS_URL, sha256=sha256(annotations)),
         versions=dict(python=platform.python_version(), torch=torch.__version__, torchvision=torchvision.__version__))
     path = args.manifest_dir / 'manifest.json'

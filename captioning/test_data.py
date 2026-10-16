@@ -36,6 +36,12 @@ class DataTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(all(c in r['all_captions'] for c, r in zip(first, records)))
 
+    def test_select_captions_excludes_references_exceeding_max_tokens(self):
+        too_long = 'word ' * 100
+        records = [{'all_captions': ['a short caption', too_long]}]
+        for seed in range(20):
+            self.assertEqual(select_captions(records, random.Random(seed)), ['a short caption'])
+
 
 if __name__ == '__main__':
     unittest.main()

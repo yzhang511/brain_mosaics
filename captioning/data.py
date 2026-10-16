@@ -34,9 +34,13 @@ def decode(ids):
     return _ENC.decode(result)
 
 
-def select_captions(records, rng):
-    """One caption per record, drawn uniformly from that record's all_captions."""
-    return [rng.choice(record['all_captions']) for record in records]
+def select_captions(records, rng, max_tokens=64):
+    """One caption per record, drawn uniformly from that record's all_captions that fit
+    max_tokens. Only the lowest-ID caption is guaranteed to fit (prepare.py's selection
+    filter checks that one only); other references can be longer and must be excluded
+    here, not passed to encode(), which raises rather than truncating."""
+    return [rng.choice([text for text in record['all_captions'] if encoded_length(text) <= max_tokens])
+            for record in records]
 
 
 def caption_batch(records, max_tokens=64, captions=None):

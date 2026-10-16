@@ -78,6 +78,13 @@ def main():
     parser.add_argument('--core-lr', type=float, default=None,
                         help='Learning rate for core.parameters(). Defaults to --learning-rate.')
     parser.add_argument('--target-nll', type=float, default=0.03)
+    parser.add_argument('--eval-train-subset-size', type=int, default=None,
+                        help='If set, evaluate the train split (NLL/accuracy/generations, at step 0, '
+                             'every --eval-every, and in the final report) on a fixed random subsample '
+                             'of this many train images instead of the full split; the same subsample '
+                             'is used every time, drawn deterministically from --seed. Training steps '
+                             'still sample from the full train split. Intended for large train splits '
+                             '(e.g. 100k) where full-split evaluation dominates runtime.')
     parser.add_argument('--seed', type=int, default=20261014)
     parser.add_argument('--caption-resampling', choices=['fixed', 'per-epoch'], default='fixed',
                         help='fixed: always train on each image\'s lowest-ID caption. '
@@ -89,6 +96,12 @@ def main():
     parser.add_argument('--n-embd', type=int, default=256)
     parser.add_argument('--n-head', type=int, default=4)
     parser.add_argument('--pmem-size', type=int, default=256)
+    parser.add_argument('--grid-size', type=int, default=14,
+                        help='Must match the spatial grid size features were cached at '
+                             '(captioning.prepare --feature-pool-size).')
+    parser.add_argument('--feature-dim', type=int, default=128,
+                        help='Must match the channel count of the cached features '
+                             '(128 for ResNet-18 layer2, 512 for layer4).')
     parser.add_argument('--block-size', type=int, default=None,
                         help='Defaults to grid_size**2 + max_caption_tokens. Set explicitly to '
                              'match a pretrained core (512 for babistories-12L768d).')
@@ -130,6 +143,17 @@ def main():
         batches[split] = (cache[split].to(device), inputs.to(device), targets.to(device))
     train_records = manifest['train']
     epoch_steps = -(-len(train_records) // args.batch_size)  # ceil division
+    eval_train_indices = None
+    if args.eval_train_subset_size is not None:
+        subset_size = min(args.eval_train_subset_size, len(train_records))
+        subset_rng = random.Random(f'{args.seed}:eval-train-subsample')
+        eval_train_indices = torch.tensor(
+            sorted(subset_rng.sample(range(len(train_records)), subset_size)), device=device)
+
+    def eval_view(features, inputs, targets):
+        if eval_train_indices is None:
+            return features, inputs, targets
+        return features[eval_train_indices], inputs[eval_train_indices], targets[eval_train_indices]
 
     def resample_train_batch(epoch_index):
         rng = random.Random(f'{args.seed}:caption-resample:{epoch_index}')
@@ -138,7 +162,8 @@ def main():
         return inputs.to(device), targets.to(device)
 
     config = CaptionConfig(n_layer=args.n_layer, n_embd=args.n_embd, n_head=args.n_head,
-                           pmem_size=args.pmem_size, block_size=args.block_size)
+                           pmem_size=args.pmem_size, block_size=args.block_size,
+                           grid_size=args.grid_size, feature_dim=args.feature_dim)
     model = Captioner(config).to(device)
     pretrained_checkpoint_sha256 = None
     if args.init_from_checkpoint and not args.resume:
@@ -213,7 +238,7 @@ def main():
         (args.output_dir / 'history.json').write_text(json.dumps(history, indent=2) + '\n')
 
     if not history:
-        initial = evaluate(model, features, inputs, targets, args.batch_size)
+        initial = evaluate(model, *eval_view(features, inputs, targets), args.batch_size)
         history.append(dict(step=0, train=initial))
         print(json.dumps(history[-1]), flush=True)
         tracker.log(0, {f'train/{key}': value for key, value in initial.items()})
@@ -242,7 +267,7 @@ def main():
         if step % 10 == 0:
             tracker.log(step, {'train/batch_nll': loss.item(), 'runtime/step_seconds': timings[-1]})
         if step % args.eval_every == 0 or step == args.steps:
-            measured = evaluate(model, features, inputs, targets, args.batch_size)
+            measured = evaluate(model, *eval_view(features, inputs, targets), args.batch_size)
             history.append(dict(step=step, train=measured, epoch=current_epoch, core_frozen=core_frozen,
                                 elapsed_seconds=time.perf_counter() - start_time))
             print(json.dumps(history[-1]), flush=True)
@@ -261,7 +286,8 @@ def main():
         peak_gpu_memory_bytes=torch.cuda.max_memory_allocated() if device.type == 'cuda' else None,
         gpu_note='CPU run; GPU timing and peak GPU memory were not measured' if device.type == 'cpu' else None,
         results={})
-    for split, (features, inputs, targets) in batches.items():
+    report_batches = dict(batches, train=eval_view(*batches['train']))
+    for split, (features, inputs, targets) in report_batches.items():
         report['results'][split] = {}
         panel_size = min(args.qualitative_panel_size, len(features))
         for condition, modified in [('correct', features), ('shuffled', features.roll(1, 0)),
