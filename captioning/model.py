@@ -23,6 +23,10 @@ class CaptionConfig:
     pad_id: int = 50258
     bos_id: int = 50257
     eos_id: int = 50256
+    block_size: int = None  # None: grid_size**2 + max_caption_tokens. Set explicitly to match
+                            # a pretrained core (e.g. 512 for babistories-12L768d); attn.bias and
+                            # leaky_avg.coef are sliced to the actual sequence length at forward
+                            # time, so a larger block_size than the caption wrapper needs is safe.
 
 
 def spatial_positions(grid_size, dim):
@@ -46,9 +50,13 @@ class Captioner(nn.Module):
             raise ValueError('PAD, BOS and EOS must be distinct')
         if not all(0 <= i < config.vocab_size for i in (config.pad_id, config.bos_id, config.eos_id)):
             raise ValueError('Special token IDs must be in the vocabulary')
+        needed_size = config.grid_size ** 2 + config.max_caption_tokens
+        block_size = needed_size if config.block_size is None else config.block_size
+        if block_size < needed_size:
+            raise ValueError('block_size must fit the visual prefix plus max_caption_tokens')
         self.core = MemoryMosaic(MemoryMosaicConfig(
             vocab_size=config.vocab_size,
-            block_size=config.grid_size ** 2 + config.max_caption_tokens,
+            block_size=block_size,
             n_layer=config.n_layer, n_embd=config.n_embd, n_head=config.n_head,
             pmem_size=config.pmem_size, pmem_count=1, dropout=config.dropout, bias=config.bias,
         ))
@@ -57,6 +65,16 @@ class Captioner(nn.Module):
         self.register_buffer('positions', spatial_positions(config.grid_size, config.n_embd))
         self.adapter.apply(self.core._init_weights)
         nn.init.normal_(self.image_type, std=0.02)
+
+    def load_pretrained_core(self, state_dict):
+        """Load a pretrained MemoryMosaic checkpoint (e.g. babistories-12L768d) into self.core.
+
+        The reserved BOS id's embedding row is re-initialized afterwards: it was never
+        meaningfully trained as a caption-boundary signal during text-only pretraining.
+        """
+        result = self.core.load_state_dict(state_dict, strict=True)
+        nn.init.normal_(self.core.mosaic.wte.weight[self.config.bos_id], std=0.02)
+        return result
 
     def forward(self, features, tokens, targets=None, return_states=False):
         """Features: B,C,H,W; tokens: BOS + words; targets: words + EOS.

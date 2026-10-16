@@ -76,6 +76,65 @@ class CaptionTests(unittest.TestCase):
         loss.backward()
         self.assertTrue(torch.isfinite(loss))
 
+    def test_block_size_override_matches_pretrained_shapes(self):
+        # grid_size=2 -> needed_size=4+8=12; a pretrained core built at block_size=20
+        # (as babistories-12L768d is built at 512, larger than any caption sequence)
+        # must still load and forward correctly: attn.bias/leaky_avg.coef are sliced
+        # to the actual sequence length, not tied to the wrapper's own needed_size.
+        config = CaptionConfig(vocab_size=12, n_layer=2, n_embd=16, n_head=2, pmem_size=8,
+            grid_size=2, feature_dim=3, max_caption_tokens=8, pad_id=0, bos_id=1, eos_id=2,
+            block_size=20)
+        model = Captioner(config).eval()
+        self.assertEqual(model.core.config.block_size, 20)
+        logits, _ = model(self.features, self.tokens)
+        self.assertTrue(torch.isfinite(logits).all())
+        with self.assertRaises(ValueError):
+            Captioner(CaptionConfig(vocab_size=12, n_layer=2, n_embd=16, n_head=2, pmem_size=8,
+                grid_size=2, feature_dim=3, max_caption_tokens=8, pad_id=0, bos_id=1, eos_id=2,
+                block_size=10))  # needed_size is 12; 10 is too small
+
+    def test_load_pretrained_core_reinitializes_bos_row_only(self):
+        source_config = CaptionConfig(vocab_size=12, n_layer=2, n_embd=16, n_head=2, pmem_size=8,
+            grid_size=2, feature_dim=3, max_caption_tokens=8, pad_id=0, bos_id=1, eos_id=2)
+        source = Captioner(source_config).eval()
+        original_bos_row = source.core.mosaic.wte.weight[1].clone()
+        original_other_rows = source.core.mosaic.wte.weight.clone()
+        state_dict = source.core.state_dict()
+
+        target = Captioner(CaptionConfig(vocab_size=12, n_layer=2, n_embd=16, n_head=2, pmem_size=8,
+            grid_size=2, feature_dim=3, max_caption_tokens=8, pad_id=0, bos_id=1, eos_id=2)).eval()
+        torch.manual_seed(123)
+        result = target.load_pretrained_core(state_dict)
+        self.assertEqual(list(result.missing_keys), [])
+        self.assertEqual(list(result.unexpected_keys), [])
+
+        loaded = target.core.mosaic.wte.weight.detach()
+        self.assertFalse(torch.allclose(loaded[1], original_bos_row))
+        unchanged = torch.ones(loaded.shape[0], dtype=torch.bool)
+        unchanged[1] = False
+        torch.testing.assert_close(loaded[unchanged], original_other_rows[unchanged])
+
+        # Text-only predictions (bypassing the visual wrapper, i.e. calling core directly)
+        # are reproduced for every vocabulary id except BOS: since lm_head is tied to wte,
+        # re-initializing the BOS embedding row necessarily changes the logit for predicting
+        # BOS at every position, even though BOS never appears in the input tokens below.
+        text_tokens = torch.tensor([[4, 5, 6, 7]])
+        x = target.core.mosaic.drop(target.core.mosaic.wte(text_tokens))
+        for block in target.core.mosaic.h:
+            x = block(x)
+        x = target.core.mosaic.ln_f(x)
+        logits_first = target.core.lm_head(x)
+        x = source.core.mosaic.drop(source.core.mosaic.wte(text_tokens))
+        for block in source.core.mosaic.h:
+            x = block(x)
+        x = source.core.mosaic.ln_f(x)
+        logits_second = source.core.lm_head(x)
+        non_bos = torch.ones(logits_first.shape[-1], dtype=torch.bool)
+        non_bos[source_config.bos_id] = False
+        torch.testing.assert_close(logits_first[..., non_bos], logits_second[..., non_bos])
+        self.assertFalse(torch.allclose(logits_first[..., source_config.bos_id],
+                                        logits_second[..., source_config.bos_id]))
+
 
 if __name__ == '__main__':
     unittest.main()

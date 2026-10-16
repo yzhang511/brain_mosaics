@@ -19,6 +19,17 @@ from captioning.vision import FrozenEncoder, preprocess_image
 
 INSPECTION_IDS = {139, 39769, 252219, 397133}
 ANNOTATIONS_URL = 'https://s3.amazonaws.com/images.cocodataset.org/annotations/annotations_trainval2017.zip'
+DEFAULT_T20_MANIFEST = Path(__file__).parent / 'alessandro_t20_manifest.json'
+
+
+def load_t20_coco_exclusions(manifest_path):
+    """COCO image ids Alessandro's t20 participant was actually shown (category
+    coco_free_recall in captioning/alessandro_audit.py's manifest). These must stay
+    out of the generic COCO-10k warm-up pool so they remain an unseen specialization
+    set for the later t20-specific fine-tuning stage."""
+    records = json.loads(manifest_path.read_text())
+    return {int(record['coco_image_id']) for record in records
+            if record['category'] == 'coco_free_recall' and record['coco_image_id']}
 
 
 def sha256(path):
@@ -110,6 +121,10 @@ def main():
                         help='Concurrent image downloads; scale up for large caches.')
     parser.add_argument('--encode-batch-size', type=int, default=32,
                         help='Images per encoder forward pass.')
+    parser.add_argument('--exclude-t20-manifest', type=Path, default=DEFAULT_T20_MANIFEST,
+                        help='Manifest from captioning/alessandro_audit.py; its coco_free_recall '
+                             'image ids are excluded from sampling so they stay unseen for the '
+                             'later t20 specialization stage. Pass a nonexistent path to disable.')
     args = parser.parse_args()
     if min(args.download_workers, args.encode_batch_size) < 1:
         raise ValueError('Download workers and encode batch size must be positive')
@@ -117,12 +132,15 @@ def main():
     downloads = args.work_dir / 'downloads'
     downloads.mkdir(parents=True, exist_ok=True)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
+    t20_excluded = (load_t20_coco_exclusions(args.exclude_t20_manifest)
+                    if args.exclude_t20_manifest.exists() else set())
+    excluded = INSPECTION_IDS | t20_excluded
     annotations = downloads / 'annotations_trainval2017.zip'
     download(ANNOTATIONS_URL, annotations)
     with zipfile.ZipFile(annotations) as archive:
-        train, train_excluded = choose_records(archive, 'train2017', args.train_size, args.seed)
+        train, train_excluded = choose_records(archive, 'train2017', args.train_size, args.seed, excluded)
         held_out, held_out_excluded = choose_records(archive, 'val2017', args.val_size + args.test_size,
-                                  args.seed + 1, INSPECTION_IDS)
+                                  args.seed + 1, excluded)
     val, test = held_out[:args.val_size], held_out[args.val_size:]
     lengths = [encoded_length(record['caption']) for record in train + val]
     weights = ResNet18_Weights.IMAGENET1K_V1
@@ -145,6 +163,8 @@ def main():
     manifest = dict(seed=args.seed, train=train, val=val,
         reserved_test_ids=[record['image_id'] for record in test],
         excluded_inspection_ids=sorted(INSPECTION_IDS),
+        excluded_t20_coco_ids=dict(count=len(t20_excluded), source=str(args.exclude_t20_manifest),
+            ids=sorted(t20_excluded)),
         excluded_long_caption_ids=dict(train=train_excluded, held_out=held_out_excluded),
         selection='shuffle sorted image IDs with random.Random(seed); val2017 seed+1; fixed caption is lowest annotation ID; '
                   'images whose lowest-ID caption exceeds max_caption_tokens are skipped during selection, not truncated',

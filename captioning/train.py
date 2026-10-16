@@ -65,6 +65,18 @@ def main():
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--eval-every', type=int, default=100)
     parser.add_argument('--learning-rate', type=float, default=0.001)
+    parser.add_argument('--core-freeze-steps', type=int, default=0,
+                        help='Freeze model.core (language core, including the tied wte/lm_head '
+                             'embedding) for the first N training steps, so only the adapter and '
+                             'image_type warm up; core unfreezes for step N+1 onward. Freezing uses '
+                             'requires_grad_(False), not no_grad, so caption gradients still flow '
+                             'back through the frozen core into the adapter. 0 (default): never '
+                             'freeze, matching prior behavior.')
+    parser.add_argument('--adapter-lr', type=float, default=None,
+                        help='Learning rate for adapter.parameters() + image_type. '
+                             'Defaults to --learning-rate.')
+    parser.add_argument('--core-lr', type=float, default=None,
+                        help='Learning rate for core.parameters(). Defaults to --learning-rate.')
     parser.add_argument('--target-nll', type=float, default=0.03)
     parser.add_argument('--seed', type=int, default=20261014)
     parser.add_argument('--caption-resampling', choices=['fixed', 'per-epoch'], default='fixed',
@@ -73,6 +85,23 @@ def main():
                              'references, at the start of every epoch (an epoch is ceil(train_size/batch_size) steps).')
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
     parser.add_argument('--resume', type=Path)
+    parser.add_argument('--n-layer', type=int, default=4)
+    parser.add_argument('--n-embd', type=int, default=256)
+    parser.add_argument('--n-head', type=int, default=4)
+    parser.add_argument('--pmem-size', type=int, default=256)
+    parser.add_argument('--block-size', type=int, default=None,
+                        help='Defaults to grid_size**2 + max_caption_tokens. Set explicitly to '
+                             'match a pretrained core (512 for babistories-12L768d).')
+    parser.add_argument('--init-from-checkpoint', type=Path,
+                        help='nanoMosaics pretraining checkpoint (e.g. babistories-12L768d ckpt.pt). '
+                             'Loaded into the language core only; adapter/image-type/positions stay '
+                             'freshly initialized. Ignored if --resume is also given.')
+    parser.add_argument('--qualitative-panel-size', type=int, default=32,
+                        help='Autoregressive generation (for the final report) is capped to this '
+                             'many images per split/condition; NLL/token-accuracy in the same report '
+                             'still cover the full split. Generation is far more expensive than a '
+                             'single forward pass, so running it over a full 10k-scale split is '
+                             'infeasible; this is the fixed qualitative panel the plan calls for.')
     parser.add_argument('--wandb-mode', choices=['online', 'offline', 'disabled'], default='disabled')
     parser.add_argument('--wandb-project', default='memory-mosaics')
     parser.add_argument('--wandb-entity')
@@ -108,9 +137,29 @@ def main():
         inputs, targets = caption_batch(train_records, captions=captions)
         return inputs.to(device), targets.to(device)
 
-    config = CaptionConfig()
+    config = CaptionConfig(n_layer=args.n_layer, n_embd=args.n_embd, n_head=args.n_head,
+                           pmem_size=args.pmem_size, block_size=args.block_size)
     model = Captioner(config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
+    pretrained_checkpoint_sha256 = None
+    if args.init_from_checkpoint and not args.resume:
+        pretrained = torch.load(args.init_from_checkpoint, map_location=device, weights_only=False)
+        # dropout is a training hyperparameter, not an architectural/shape constraint, so a
+        # fine-tuning run is free to pick its own value independent of what pretraining used.
+        expected = dict(n_layer=config.n_layer, n_head=config.n_head, n_embd=config.n_embd,
+                        pmem_size=config.pmem_size, pmem_count=1, vocab_size=config.vocab_size,
+                        bias=config.bias, block_size=model.core.config.block_size)
+        actual = {key: pretrained['model_args'][key] for key in expected}
+        if actual != expected:
+            raise ValueError(f'Checkpoint architecture {actual} does not match '
+                              f'the requested architecture {expected}')
+        model.load_pretrained_core(pretrained['model'])
+        pretrained_checkpoint_sha256 = sha256(args.init_from_checkpoint)
+    adapter_lr = args.learning_rate if args.adapter_lr is None else args.adapter_lr
+    core_lr = args.learning_rate if args.core_lr is None else args.core_lr
+    optimizer = torch.optim.AdamW([
+        {'params': list(model.adapter.parameters()) + [model.image_type], 'lr': adapter_lr},
+        {'params': list(model.core.parameters()), 'lr': core_lr},
+    ], weight_decay=0.01)
     history, timings, start_step = [], [], 0
     if args.resume:
         saved = torch.load(args.resume, map_location=device, weights_only=False)
@@ -125,10 +174,12 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     source_hashes = {name: sha256(Path(__file__).parent / name) for name in
                      ['model.py', 'vision.py', 'data.py', 'prepare.py', 'train.py', 'tracking.py']}
-    experiment = dict(model=asdict(config), optimizer=dict(name='AdamW', lr=args.learning_rate,
+    experiment = dict(model=asdict(config), optimizer=dict(name='AdamW', adapter_lr=adapter_lr,
+        core_lr=core_lr, core_freeze_steps=args.core_freeze_steps,
         weight_decay=0.01, betas=[0.9, 0.999], clip_grad_norm=1.0),
         arguments={key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
         manifest_sha256=cache['manifest_sha256'], feature_cache_sha256=sha256(args.features),
+        pretrained_checkpoint_sha256=pretrained_checkpoint_sha256,
         source_sha256=source_hashes, torch_version=torch.__version__, device=str(device),
         sampling=('uniform random images with replacement, fixed lowest-ID caption' if args.caption_resampling == 'fixed'
                   else f'uniform random images with replacement; caption per training image resampled '
@@ -174,6 +225,8 @@ def main():
                 current_epoch = epoch_index
                 inputs, targets = resample_train_batch(epoch_index)
         model.train()
+        core_frozen = step <= args.core_freeze_steps
+        model.core.requires_grad_(not core_frozen)
         indices = torch.randint(len(features), (args.batch_size,), device=device)
         synchronize(device)
         before = time.perf_counter()
@@ -190,7 +243,7 @@ def main():
             tracker.log(step, {'train/batch_nll': loss.item(), 'runtime/step_seconds': timings[-1]})
         if step % args.eval_every == 0 or step == args.steps:
             measured = evaluate(model, features, inputs, targets, args.batch_size)
-            history.append(dict(step=step, train=measured, epoch=current_epoch,
+            history.append(dict(step=step, train=measured, epoch=current_epoch, core_frozen=core_frozen,
                                 elapsed_seconds=time.perf_counter() - start_time))
             print(json.dumps(history[-1]), flush=True)
             validation = evaluate(model, *batches['val'], args.batch_size)
@@ -210,13 +263,15 @@ def main():
         results={})
     for split, (features, inputs, targets) in batches.items():
         report['results'][split] = {}
+        panel_size = min(args.qualitative_panel_size, len(features))
         for condition, modified in [('correct', features), ('shuffled', features.roll(1, 0)),
                                     ('zero_content', torch.zeros_like(features))]:
             metrics = evaluate(model, modified, inputs, targets, args.batch_size)
-            samples = generations(model, modified, manifest[split], args.batch_size)
-            metrics.update(generations=samples, exact_match_rate=sum(s['exact_token_match'] for s in samples) / len(samples))
+            samples = generations(model, modified[:panel_size], manifest[split][:panel_size], args.batch_size)
+            metrics.update(generations=samples, qualitative_panel_size=panel_size,
+                exact_match_rate=sum(s['exact_token_match'] for s in samples) / len(samples))
             if condition == 'shuffled':
-                donor_ids = [r['image_id'] for r in manifest[split]]
+                donor_ids = [r['image_id'] for r in manifest[split][:panel_size]]
                 donor_ids = donor_ids[-1:] + donor_ids[:-1]
                 for sample, donor in zip(samples, donor_ids):
                     sample['feature_image_id'] = donor
